@@ -48,7 +48,7 @@ function Invoke-NinjaOneExtensionScheduler {
                 Batch            = @($Batch)
             }
             #Write-Host ($InputObject | ConvertTo-Json)
-            $InstanceId = Start-NewOrchestration -FunctionName 'CIPPOrchestrator' -InputObject ($InputObject | ConvertTo-Json -Depth 5 -Compress)
+            $InstanceId = Start-CIPPOrchestrator -InputObject $InputObject
             Write-Host "Started permissions orchestration with ID = '$InstanceId'"
         }
 
@@ -59,7 +59,7 @@ function Invoke-NinjaOneExtensionScheduler {
         }
         Add-AzDataTableEntity @Table -Entity $AddObject -Force
 
-        Write-LogMessage -API 'NinjaOneSync' -Headers'CIPP' -message "NinjaOne Daily Synchronization Queued for $(($TenantsToProcess | Measure-Object).count) Tenants" -Sev 'Info'
+        Write-LogMessage -API 'NinjaOneSync'  -message "NinjaOne Daily Synchronization Queued for $(($TenantsToProcess | Measure-Object).count) Tenants" -Sev 'Info'
 
     } else {
         if ($LastRunTime -lt (Get-Date).AddMinutes(-90)) {
@@ -76,7 +76,7 @@ function Invoke-NinjaOneExtensionScheduler {
                     $_ | Add-Member -NotePropertyName lastStartTime -NotePropertyValue $Null -Force
                 }
             }
-            $CatchupTenants = $TenantsToProcess | Where-Object { (((($_.lastEndTime -eq $Null) -or ($_.lastStartTime -gt $_.lastEndTime)) -and ($_.lastStartTime -lt (Get-Date).AddMinutes(-30)))) -or ($_.lastStartTime -lt $LastRunTime) }
+            $CatchupTenants = $TenantsToProcess | Where-Object { ((($_.lastEndTime -eq $Null) -or ($_.lastStartTime -gt $_.lastEndTime)) -and ($_.lastStartTime -lt (Get-Date).AddHours(-3))) -or (($_.lastStartTime -lt $LastRunTime) -and ($Null -eq $_.lastEndTime -or $_.lastEndTime -lt $LastRunTime)) }
             $Batch = foreach ($Tenant in $CatchupTenants) {
                 [PSCustomObject]@{
                     NinjaAction  = 'SyncTenant'
@@ -90,12 +90,12 @@ function Invoke-NinjaOneExtensionScheduler {
                     Batch            = @($Batch)
                 }
                 #Write-Host ($InputObject | ConvertTo-Json)
-                $InstanceId = Start-NewOrchestration -FunctionName 'CIPPOrchestrator' -InputObject ($InputObject | ConvertTo-Json -Depth 5 -Compress)
+                $InstanceId = Start-CIPPOrchestrator -InputObject $InputObject
                 Write-Host "Started permissions orchestration with ID = '$InstanceId'"
             }
 
             if (($CatchupTenants | Measure-Object).count -gt 0) {
-                Write-LogMessage -API 'NinjaOneSync' -Headers'CIPP' -message "NinjaOne Synchronization Catchup Queued for $(($CatchupTenants | Measure-Object).count) Tenants" -Sev 'Info'
+                Write-LogMessage -API 'NinjaOneSync'  -message "NinjaOne Synchronization Catchup Queued for $(($CatchupTenants | Measure-Object).count) Tenants" -Sev 'Info'
             }
 
         }

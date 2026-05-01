@@ -8,7 +8,7 @@ function Remove-CIPPCache {
     )
     # Remove all tenants except excluded
     $TenantsTable = Get-CippTable -tablename 'Tenants'
-    $Filter = "PartitionKey eq 'Tenants' and Excluded eq false"
+    $Filter = "PartitionKey eq 'Tenants' and Excluded eq false and delegatedPrivilegeStatus eq 'granularDelegatedAdminPrivileges'"
     $ClearIncludedTenants = Get-CIPPAzDataTableEntity @TenantsTable -Filter $Filter -Property PartitionKey, RowKey
     if ($ClearIncludedTenants) {
         Remove-AzDataTableEntity -Force @TenantsTable -Entity $ClearIncludedTenants
@@ -27,6 +27,10 @@ function Remove-CIPPCache {
             }
         }
 
+        'Clearing Intune policy tracking data'
+        $TrackingTableContext = Get-CIPPTable -TableName 'IntunePolicyTypeTracking'
+        Remove-AzDataTable @TrackingTableContext
+
         'Clearing domain analyser results'
         # Remove Domain Analyser cached results
         $DomainsTable = Get-CippTable -tablename 'Domains'
@@ -39,7 +43,7 @@ function Remove-CIPPCache {
             Update-AzDataTableEntity -Force @DomainsTable -Entity $ClearDomainAnalyserRows
         }
 
-        $ENV:SetFromProfile = $null
+        $env:SetFromProfile = $null
         $Script:SkipListCache = $Null
         $Script:SkipListCacheEmpty = $Null
         $Script:IncludedTenantsCache = $Null

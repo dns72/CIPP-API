@@ -57,7 +57,7 @@ foreach ($Standard in $StandardsInfo) {
 
     # Calculate the standards file name and path
     $StandardFileName = $Standard.name -replace 'standards.', 'Invoke-CIPPStandard'
-    $StandardsFilePath = Resolve-Path "$(Split-Path $PSScriptRoot)\Modules\CIPPCore\Public\Standards\$StandardFileName.ps1"
+    $StandardsFilePath = Resolve-Path "$(Split-Path $PSScriptRoot)\Modules\CIPPStandards\Public\Standards\$StandardFileName.ps1"
     if (-not (Test-Path $StandardsFilePath)) {
         Write-Host "No file found for standard $($Standard.name)" -ForegroundColor Yellow
         continue
@@ -99,6 +99,7 @@ foreach ($Standard in $StandardsInfo) {
                 'docsDescription' { continue }
                 'helpText' { continue }
                 'label' { continue }
+                'requiredCapabilities' { continue }
                 Default {
                     $NewComment.Add("       $($Property.Name.ToUpper())`n")
                     if ($Property.Value -is [System.Object[]]) {
@@ -106,11 +107,38 @@ foreach ($Standard in $StandardsInfo) {
                             $NewComment.Add("           $(ConvertTo-Json -InputObject $Value -Depth 5 -Compress)`n")
                         }
                         continue
+                    } elseif ($Property.Value -is [System.Management.Automation.PSCustomObject]) {
+                        $NewComment.Add("           $(ConvertTo-Json -InputObject $Property.Value -Depth 5 -Compress)`n")
+                        continue
+                    } else {
+                        if ($null -ne $Property.Value) {
+                            $NewComment.Add("           $(EscapeMarkdown($Property.Value.ToString()))`n")
+                        }
                     }
-                    $NewComment.Add("           $(EscapeMarkdown($Property.Value.ToString()))`n")
                 }
             }
 
+        }
+
+        # Extract RequiredCapabilities from Test-CIPPStandardLicense in the function body
+        # Match the first occurrence of -RequiredCapabilities @(...) in the file
+        $CapabilitiesRegex = 'Test-CIPPStandardLicense\s[^}]*-RequiredCapabilities\s+@\(([^)]+)\)'
+        if ($Content -match $CapabilitiesRegex) {
+            $RawCapabilities = $Matches[1]
+            $Capabilities = @($RawCapabilities -split ',' | ForEach-Object { $_.Trim().Trim("'").Trim('"') } | Where-Object { $_ })
+            if ($Capabilities.Count -gt 0) {
+                $NewComment.Add("       REQUIREDCAPABILITIES`n")
+                foreach ($Cap in $Capabilities) {
+                    $NewComment.Add("           `"$Cap`"`n")
+                }
+                # Update the standard object for JSON output
+                $Standard | Add-Member -NotePropertyName 'requiredCapabilities' -NotePropertyValue $Capabilities -Force
+            }
+        } else {
+            # No license check — remove stale property if present
+            if ($Standard.PSObject.Properties['requiredCapabilities']) {
+                $Standard.PSObject.Properties.Remove('requiredCapabilities')
+            }
         }
 
         # Add header about how to update the comment block with this script
@@ -118,23 +146,7 @@ foreach ($Standard in $StandardsInfo) {
         $NewComment.Add("           Run the Tools\Update-StandardsComments.ps1 script to update this comment block`n")
         # -Online help link
         $NewComment.Add("   .LINK`n")
-        $DocsLink = 'https://docs.cipp.app/user-documentation/tenant/standards/list-standards/'
-
-        switch ($Standard.cat) {
-            'Global Standards' { $DocsLink += 'global-standards#' + $Standard.impact.ToLower() -replace ' ', '-' }
-            'Entra (AAD) Standards' { $DocsLink += 'entra-aad-standards#' + $Standard.impact.ToLower() -replace ' ', '-' }
-            'Exchange Standards' { $DocsLink += 'exchange-standards#' + $Standard.impact.ToLower() -replace ' ', '-' }
-            'Defender Standards' { $DocsLink += 'defender-standards#' + $Standard.impact.ToLower() -replace ' ', '-' }
-            'Intune Standards' { $DocsLink += 'intune-standards#' + $Standard.impact.ToLower() -replace ' ', '-' }
-            'SharePoint Standards' { $DocsLink += 'sharepoint-standards#' + $Standard.impact.ToLower() -replace ' ', '-' }
-            'Teams Standards' { $DocsLink += 'teams-standards#' + $Standard.impact.ToLower() -replace ' ', '-' }
-            Default {}
-        }
-
-        switch ($Standard.impact) {
-            condition {  }
-            Default {}
-        }
+        $DocsLink = 'https://docs.cipp.app/user-documentation/tenant/standards/list-standards'
 
         $NewComment.Add("       $DocsLink`n")
         $NewComment.Add('   #>')
@@ -149,4 +161,26 @@ foreach ($Standard in $StandardsInfo) {
     } else {
         Write-Host "No comment block found in $StandardsFilePath" -ForegroundColor Yellow
     }
+}
+
+# Write updated standards.json with requiredCapabilities
+if (-not $WhatIf.IsPresent) {
+    $JsonOutput = $StandardsInfo | ConvertTo-Json -Depth 10
+    # Collapse simple arrays (strings/numbers only) back to single-line format
+    $JsonOutput = [regex]::Replace($JsonOutput, '(?s)\[\s*\n((?:\s*(?:"[^"]*"|[\d.]+),?\s*\n)+)\s*\]', {
+        param($m)
+        $Items = $m.Groups[1].Value -split '\n' | ForEach-Object { $_.Trim().TrimEnd(',') } | Where-Object { $_ }
+        '[' + ($Items -join ', ') + ']'
+    })
+    # Collapse simple objects (only scalar values, no nested objects/arrays) to single-line format
+    $JsonOutput = [regex]::Replace($JsonOutput, '(?s)\{\s*\n((?:\s*"[^"]*":\s*(?:"[^"]*"|[\d.eE+\-]+|true|false|null),?\s*\n)+)\s*\}', {
+        param($m)
+        $Items = $m.Groups[1].Value -split '\n' | ForEach-Object { $_.Trim().TrimEnd(',') } | Where-Object { $_ }
+        '{ ' + ($Items -join ', ') + ' }'
+    })
+    $JsonOutput | Set-Content -Path $StandardsJSONPath -Encoding utf8 -NoNewline
+    Write-Host "Updated standards.json with requiredCapabilities" -ForegroundColor Green
+} else {
+    $UpdatedCount = ($StandardsInfo | Where-Object { $_.requiredCapabilities }).Count
+    Write-Host "Would update standards.json — $UpdatedCount standards have requiredCapabilities" -ForegroundColor Cyan
 }
